@@ -169,7 +169,12 @@ function ensureGitignore(root, changes) {
   const lines = (read(file) ?? '').split('\n');
   if (lines.some((l) => l.trim() === '.factory/evidence/')) return;
   // An older setup ignored all of .factory/, which would also hide the kit's scripts.
-  const kept = lines.filter((l) => !['.factory', '.factory/'].includes(l.trim()));
+  const kept = lines.filter((l, i) => {
+    const t = l.trim();
+    if (['.factory', '.factory/'].includes(t)) return false;
+    // Drop the old line's own comment too, so it isn't left dangling.
+    return !(t.startsWith('#') && /factory/i.test(t) && ['.factory', '.factory/'].includes(lines[i + 1]?.trim()));
+  });
   while (kept.length && kept[kept.length - 1] === '') kept.pop();
   write(file, `${kept.join('\n')}${kept.length ? '\n\n' : ''}# factory evidence (screenshots, reports)\n.factory/evidence/\n`);
   changes.push('.gitignore (.factory/evidence/)');
