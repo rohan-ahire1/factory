@@ -21,7 +21,7 @@ Usage: factory <command> [repo path, default: current directory]
   update    refresh the kit-managed files to this version; keeps factory.json and your docs
   doctor    check the setup and say exactly what is missing
   secret    copy your Claude token from the macOS Keychain into the repo's Actions secrets
-            (factory secret --save stores the token in the Keychain first; it asks for it hidden)
+            (copy the token from claude setup-token, then factory secret --save tests it and stores it in the Keychain)
   help      show this help
 
 After init: review factory.json, run \`node .factory/gates.mjs\`, open a PR, then \`factory secret\`.
@@ -341,10 +341,16 @@ function doctor(root) {
 function secret(root, { save }) {
   if (process.platform !== 'darwin') die('`factory secret` uses the macOS Keychain. Elsewhere run: gh secret set CLAUDE_CODE_OAUTH_TOKEN');
   if (save) {
-    process.stdout.write('Paste your token from `claude setup-token` when asked (input is hidden).\n');
-    const res = spawnSync('security', ['add-generic-password', '-U', '-a', process.env.USER, '-s', KEYCHAIN_SERVICE, '-w'], { stdio: 'inherit' });
+    // Read from the clipboard: terminals wrap the long token, and a pasted line break cuts it short at a prompt.
+    const token = spawnSync('pbpaste', { encoding: 'utf8' }).stdout.replace(/\s+/g, '');
+    if (!/^sk-ant-/.test(token)) die('the clipboard does not hold a Claude token. Run `claude setup-token`, copy the whole token, then run this again.');
+    process.stdout.write('Testing the token from your clipboard...\n');
+    const test = spawnSync('claude', ['-p', 'Reply with just OK'], { encoding: 'utf8', env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token }, timeout: 120000 });
+    if (test.status !== 0) die(`that token does not work: ${(test.stdout + test.stderr).trim().slice(0, 300)}\nRun \`claude setup-token\` again and copy the whole token.`);
+    const res = spawnSync('security', ['add-generic-password', '-U', '-a', process.env.USER, '-s', KEYCHAIN_SERVICE, '-w', token]);
     if (res.status !== 0) die('could not save the token to the Keychain.');
-    ok('token saved in the Keychain. Run `factory secret` in each repo to use it.');
+    spawnSync('pbcopy', { input: '' });
+    ok('token works; saved in the Keychain and cleared from the clipboard. Run `factory secret` in each repo to use it.');
     if (!existsSync(join(root, '.git'))) return;
   }
   const repo = gh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], root);

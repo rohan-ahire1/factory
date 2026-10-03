@@ -15,7 +15,7 @@ mkdir -p ~/.claude/skills && ln -s ~/factory/skills/factory-setup ~/.claude/skil
 Then, once per account:
 
 1. Install the Claude GitHub app and choose **All repositories**: https://github.com/apps/claude
-2. Make a Claude token and keep it in the macOS Keychain:
+2. Make a Claude token, copy it (the whole thing), then save it. `--save` reads the clipboard, tests the token, and keeps it in the macOS Keychain:
    ```bash
    claude setup-token
    ```
