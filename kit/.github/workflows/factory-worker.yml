@@ -72,5 +72,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Issue label → autonomous run with the factory playbook. Comments → interactive (@claude) mode.
-          prompt: ${{ github.event_name == 'issues' && format('Work GitHub issue #{0} in {1} end to end using the factory-worker skill in .claude/skills/factory-worker/SKILL.md. Read AGENTS.md and factory.json first. Create your own branch named factory/issue-{0}-<short-slug>; never commit or push to the protected branch and never merge. Prove the change with `node .factory/gates.mjs` (and the factory-verify skill for UI changes), then open a PR with gh pr create following .github/pull_request_template.md, and comment the PR link on the issue. If you hit a blocker, comment on the issue explaining it and stop.', github.event.issue.number, github.repository) || '' }}
+          # Block scalar: in a plain value, the " #" in "issue #{0}" would start a YAML comment.
+          prompt: >-
+            ${{ github.event_name == 'issues' && format('Work GitHub issue #{0} in {1} end to end using the factory-worker skill in .claude/skills/factory-worker/SKILL.md. Read AGENTS.md and factory.json first. Create your own branch named factory/issue-{0}-<short-slug>; never commit or push to the protected branch and never merge. Prove the change with `node .factory/gates.mjs` (and the factory-verify skill for UI changes), then open a PR with gh pr create following .github/pull_request_template.md, and comment the PR link on the issue. If you hit a blocker, comment on the issue explaining it and stop.', github.event.issue.number, github.repository) || '' }}
           claude_args: ${{ steps.args.outputs.claude_args }}

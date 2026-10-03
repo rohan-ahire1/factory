@@ -311,6 +311,11 @@ function doctor(root) {
         bad(`${name} deploys on every push to ${cfg.branch} with no owner check. Add \`if: github.actor == github.repository_owner\` to its deploy job.`);
       }
     }
+    // A broken workflow file fails silently on GitHub (the worker just never starts), so lint when we can.
+    const lint = spawnSync('actionlint', ['-shellcheck=', '-pyflakes='], { cwd: root, encoding: 'utf8' });
+    if (lint.error) warn('actionlint not installed, so workflow files were not checked (brew install actionlint).');
+    else if (lint.status === 0) ok('workflow files are valid (actionlint)');
+    else bad(`workflow files have errors:\n${lint.stdout.trim()}`);
   }
 
   const repo = gh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], root);
