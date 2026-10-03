@@ -1,0 +1,33 @@
+name: Factory job
+description: Ask the agent factory to build or fix something. A cloud agent starts as soon as this is filed.
+title: "<what to change, in a few words>"
+labels: [factory]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: The change or bug, in plain words.
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: Pages, screens, files or modules, e.g. /pricing, the header on phones, the CSV export.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Checkable outcomes, one per line. Something a screenshot, a test or a command can prove.
+      value: |
+        - [ ] 
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Exact copy to use, links, constraints. Leave empty if none.

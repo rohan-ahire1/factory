@@ -1,0 +1,132 @@
+# Managed by the factory kit: `factory update` overwrites this file. Configure the gates in factory.json.
+name: Factory gates
+
+# Every PR: runs the gates from factory.json and, for apps, a real-browser check of every page.
+# Screenshots of the routes under "## Verify routes" in the PR body are posted as a PR comment.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: factory-gates-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # pushes screenshots to the factory-evidence branch only
+      pull-requests: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Read factory.json
+        id: cfg
+        run: |
+          echo "node=$(jq -r '.node // "22"' factory.json)" >> "$GITHUB_OUTPUT"
+          echo "app=$(jq -r 'if .app then "true" else "false" end' factory.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ steps.cfg.outputs.node }}
+          cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
+
+      - name: Install dependencies
+        run: node .factory/gates.mjs --setup-only
+
+      - name: Install browser
+        if: steps.cfg.outputs.app == 'true'
+        run: node .factory/verify.mjs --install
+
+      - name: Run gates
+        id: gates
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          shots="$(node .factory/pr-routes.mjs)"
+          if node .factory/gates.mjs --shots "$shots" --out .factory/evidence/ci; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-${{ github.event.pull_request.number || github.run_id }}
+          path: .factory/evidence/ci
+          if-no-files-found: ignore
+
+      - name: Post results on the PR
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          GATES_OK: ${{ steps.gates.outputs.ok }}
+        run: |
+          set -euo pipefail
+          src=.factory/evidence/ci
+          test -f "$src/gates.md" || { echo "No gates summary; skipping."; exit 0; }
+          dir="pr-$PR/${SHA:0:7}"
+          dest="$RUNNER_TEMP/evidence"
+
+          if compgen -G "$src/*.png" > /dev/null; then
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            if git fetch --depth 1 origin factory-evidence 2>/dev/null; then
+              git worktree add -B factory-evidence "$dest" FETCH_HEAD
+            else
+              git worktree add --orphan -b factory-evidence "$dest"
+            fi
+            mkdir -p "$dest/$dir"
+            cp "$src"/*.png "$dest/$dir/"
+            git -C "$dest" add -A
+            git -C "$dest" commit -q -m "Evidence for PR #$PR at ${SHA:0:7}" || true
+            for i in 1 2 3; do
+              git -C "$dest" push -q origin HEAD:factory-evidence && break
+              git -C "$dest" pull -q --rebase origin factory-evidence
+            done
+          fi
+
+          base="https://github.com/$GITHUB_REPOSITORY/blob/factory-evidence/$dir"
+          status=$([ "$GATES_OK" = "true" ] && echo "✅ passed" || echo "❌ failed")
+          {
+            echo "<!-- factory-evidence -->"
+            echo "## Factory check for ${SHA:0:7}: $status"
+            echo
+            for png in "$src"/*.png; do
+              [ -e "$png" ] || continue
+              name="$(basename "$png" .png)"
+              echo "**$name**<br><img src=\"$base/$name.png?raw=true\" width=\"320\">"
+              echo
+            done
+            sed 's/^## /### /' "$src/gates.md"
+            if [ -f "$src/report.md" ]; then
+              echo "<details><summary>Browser check report</summary>"
+              echo
+              cat "$src/report.md"
+              echo "</details>"
+            fi
+            echo
+            echo "[Logs and all evidence]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+          } > "$RUNNER_TEMP/comment.md"
+
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq '[.[] | select(.body | startswith("<!-- factory-evidence -->")) | .id] | last // empty')"
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" -F body=@"$RUNNER_TEMP/comment.md" > /dev/null
+          else
+            gh pr comment "$PR" --body-file "$RUNNER_TEMP/comment.md"
+          fi
+
+      - name: Fail if a gate failed
+        if: steps.gates.outputs.ok != 'true'
+        run: |
+          echo "A gate failed. See the PR comment or the step logs above."
+          exit 1
