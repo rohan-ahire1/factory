@@ -1,6 +1,6 @@
 # factory
 
-A drop-in agent factory for any GitHub repo. Work goes in as issues (from your phone or chat), a cloud Claude Code agent builds each one on a branch and proves it, CI rechecks everything and posts the proof on the PR, and you merge.
+A drop-in agent factory for any GitHub repo. Work goes in as issues (from your phone or chat), a cloud Claude Code agent builds each one on a branch and proves it, CI rechecks everything and posts the proof on the PR, and you merge (or it merges itself once the checks pass, if you turn on auto-merge).
 
 Every repo gets the same workflows, skills and safety guard. The only per-repo file is `factory.json`, which says how to install, which checks must pass, and how to serve the app.
 
@@ -22,6 +22,7 @@ Then, once per account:
    ```bash
    factory secret --save --all
    ```
+3. Optional: to have worker PRs show under your own name, and to use auto-merge, add a GitHub token as the `FACTORY_GH_TOKEN` secret. Steps in `kit/docs/factory/README.md` ("Your name on PRs").
 
 ## Add the factory to a repo
 
@@ -41,7 +42,7 @@ By hand: `factory init`, edit `factory.json`, `node .factory/gates.mjs`, `factor
 |---|---|
 | `factory init` | Detects the stack, writes `factory.json`, copies the kit into the repo |
 | `factory update` | Refreshes the kit files to this version; keeps `factory.json` and your docs |
-| `factory doctor` | Checks the setup: config, kit files, guard, label, secret, deploy workflows |
+| `factory doctor` | Checks the setup: config, kit files, guard, labels, secrets, deploy workflows |
 | `factory secret` | Tests your token and copies it from the Keychain into the repo's Actions secret (`--save` stores it first, `--all` does every factory repo) |
 
 ## What it detects

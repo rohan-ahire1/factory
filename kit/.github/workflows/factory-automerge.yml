@@ -1,0 +1,62 @@
+# Managed by the factory kit: `factory update` overwrites this file. Turn it on with "automerge": true in factory.json.
+name: Factory auto-merge
+
+# When the gates pass on a PR, squash-merge it with your own token (FACTORY_GH_TOKEN), so the merge is yours
+# and any deploy-on-push workflow runs as you. Skips drafts, forks, PRs into other branches, PRs that changed
+# since the gates ran, and PRs labelled `factory:hold`.
+
+on:
+  workflow_run:
+    workflows: [Factory gates]
+    types: [completed]
+
+concurrency:
+  group: factory-automerge-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: >-
+      vars.FACTORY_PAUSED != 'true' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: factory.json
+          sparse-checkout-cone-mode: false
+
+      - name: Merge
+        env:
+          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$(jq -r '.automerge // false' factory.json)" != "true" ]; then
+            echo "Auto-merge is off (factory.json has no \"automerge\": true)."
+            exit 0
+          fi
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::Auto-merge is on but the FACTORY_GH_TOKEN secret is not set, so nothing was merged."
+            exit 0
+          fi
+          base=$(jq -r '.branch // "main"' factory.json)
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$HEAD_BRANCH" --state open --json number,headRefOid,isDraft,baseRefName,labels \
+            --jq "[.[] | select(.headRefOid == \"$HEAD_SHA\")] | first // empty")
+          if [ -z "$pr" ]; then
+            echo "No open PR on $HEAD_BRANCH at $HEAD_SHA (closed, or changed since the gates ran)."
+            exit 0
+          fi
+          number=$(jq -r '.number' <<<"$pr")
+          if [ "$(jq -r '.isDraft' <<<"$pr")" = "true" ]; then echo "PR #$number is a draft."; exit 0; fi
+          if [ "$(jq -r '.baseRefName' <<<"$pr")" != "$base" ]; then echo "PR #$number does not target $base."; exit 0; fi
+          if jq -e '.labels | map(.name) | index("factory:hold")' <<<"$pr" >/dev/null; then echo "PR #$number is labelled factory:hold."; exit 0; fi
+          gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --squash --delete-branch --match-head-commit "$HEAD_SHA"
+          echo "Merged PR #$number."

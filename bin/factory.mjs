@@ -88,7 +88,7 @@ ${rows.join('\n')}
 
 ### Hard rules
 
-1. **Never push to \`${cfg.branch}\`, merge PRs, or run a deploy.** Work on a branch, open a PR, and stop. A human merges.
+1. **Never push to \`${cfg.branch}\`, merge PRs, or run a deploy.** Work on a branch, open a PR, and stop. ${cfg.automerge ? 'The PR merges itself once CI passes the gates.' : 'A human merges.'}
 2. Don't edit ${protect} unless the issue asks for it explicitly.
 3. No secrets in code, logs, PRs or screenshots.
 
@@ -223,7 +223,7 @@ function loadRepoConfig(root) {
 }
 
 function withDefaults(cfg) {
-  return { branch: 'main', node: '22', setup: [], gates: [], app: null, protect: [], ...cfg, worker: { tools: [], ...cfg.worker } };
+  return { branch: 'main', node: '22', setup: [], gates: [], app: null, protect: [], automerge: false, ...cfg, worker: { tools: [], ...cfg.worker } };
 }
 
 function defaultBranch(root) {
@@ -351,6 +351,9 @@ function doctor(root) {
     const secrets = gh(['secret', 'list', '--repo', repo.out, '--json', 'name', '-q', '.[].name'], root);
     if (secrets.out.split('\n').includes('CLAUDE_CODE_OAUTH_TOKEN')) ok('secret CLAUDE_CODE_OAUTH_TOKEN is set');
     else bad(`secret CLAUDE_CODE_OAUTH_TOKEN is missing: run \`factory secret\` in ${root}`);
+    const ownToken = 'FACTORY_GH_TOKEN';
+    if (secrets.out.split('\n').includes(ownToken)) ok(`secret ${ownToken} is set: worker PRs are under your name${cfg.automerge ? ' and auto-merge is on' : ''}`);
+    else (cfg.automerge ? bad : warn)(`secret ${ownToken} is missing, so worker PRs show as Claude${cfg.automerge ? ' and auto-merge cannot run' : ''}. See "Your name on PRs" in docs/factory/README.md, then: gh secret set ${ownToken} --repo ${repo.out}`);
     const onDefault = gh(['api', `repos/${repo.out}/contents/.github/workflows/factory-worker.yml`, '--silent'], root);
     if (onDefault.ok) ok(`factory workflows are on ${cfg.branch}`);
     else warn(`factory workflows are not on ${cfg.branch} yet, so labelling an issue does nothing until the setup PR is merged.`);

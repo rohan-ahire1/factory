@@ -5,7 +5,7 @@ description: Take one factory issue from request to a verified pull request. Use
 
 # Factory worker
 
-You own one issue, start to finish, and stop at an open PR. You never merge.
+You own one issue, start to finish, and stop at an open PR. You never merge. If auto-merge is on, the PR merges itself once CI's gates pass.
 
 ## Job size
 
@@ -58,7 +58,7 @@ For UI changes, open the screenshots for the touched routes (mobile and desktop)
 
 ## 7. Open the PR
 
-- Commit with a plain, imperative message (no AI attribution lines).
+- Commit with a plain, imperative message. No AI attribution in commits or the PR body: no `Co-Authored-By` lines, no "Generated with" notes.
 - Push the branch and open a PR with `gh pr create`, using `.github/pull_request_template.md`. Fill in:
   - `Closes #<issue>`
   - **Verify routes:** the routes you touched, so CI screenshots them (apps only)
