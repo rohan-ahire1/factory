@@ -20,8 +20,10 @@ Usage: factory <command> [repo path, default: current directory]
   init      add the factory to a repo: factory.json (detected), workflows, skills, guard, docs
   update    refresh the kit-managed files to this version; keeps factory.json and your docs
   doctor    check the setup and say exactly what is missing
-  secret    copy your Claude token from the macOS Keychain into the repo's Actions secrets
-            (copy the token from claude setup-token, then factory secret --save tests it and stores it in the Keychain)
+  secret    test your Claude token from the macOS Keychain and copy it into the repo's Actions secrets
+            --save  first store the token from your clipboard (copy it from \`claude setup-token\`)
+            --all   every repo you own that has the factory, not just this one
+            New token: \`claude setup-token\`, copy it, then \`factory secret --save --all\`. One command, every repo.
   help      show this help
 
 After init: review factory.json, run \`node .factory/gates.mjs\`, open a PR, then \`factory secret\`.
@@ -359,28 +361,56 @@ function doctor(root) {
   process.exitCode = problems ? 1 : 0;
 }
 
-function secret(root, { save }) {
+// Returns null when the token works, or the error text when it doesn't.
+function testToken(token) {
+  const test = spawnSync('claude', ['-p', 'Reply with just OK'], { encoding: 'utf8', env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token }, timeout: 120000 });
+  return test.status === 0 ? null : (test.stdout + test.stderr).trim().slice(0, 300);
+}
+
+// Every repo you own that has the factory worker on its default branch.
+function factoryRepos() {
+  const list = gh(['repo', 'list', '--limit', '500', '--no-archived', '--json', 'nameWithOwner', '-q', '.[].nameWithOwner']);
+  if (!list.ok) die(`gh could not list your repos: ${list.err}`);
+  return list.out.split('\n').filter(Boolean).filter((repo) => gh(['api', `repos/${repo}/contents/.github/workflows/factory-worker.yml`, '--silent']).ok);
+}
+
+function secret(root, { save, all }) {
   if (process.platform !== 'darwin') die('`factory secret` uses the macOS Keychain. Elsewhere run: gh secret set CLAUDE_CODE_OAUTH_TOKEN');
   if (save) {
     // Read from the clipboard: terminals wrap the long token, and a pasted line break cuts it short at a prompt.
     const token = spawnSync('pbpaste', { encoding: 'utf8' }).stdout.replace(/\s+/g, '');
     if (!/^sk-ant-/.test(token)) die('the clipboard does not hold a Claude token. Run `claude setup-token`, copy the whole token, then run this again.');
     process.stdout.write('Testing the token from your clipboard...\n');
-    const test = spawnSync('claude', ['-p', 'Reply with just OK'], { encoding: 'utf8', env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token }, timeout: 120000 });
-    if (test.status !== 0) die(`that token does not work: ${(test.stdout + test.stderr).trim().slice(0, 300)}\nRun \`claude setup-token\` again and copy the whole token.`);
+    const error = testToken(token);
+    if (error) die(`that token does not work: ${error}\nRun \`claude setup-token\` again and copy the whole token.`);
     const res = spawnSync('security', ['add-generic-password', '-U', '-a', process.env.USER, '-s', KEYCHAIN_SERVICE, '-w', token]);
     if (res.status !== 0) die('could not save the token to the Keychain.');
     spawnSync('pbcopy', { input: '' });
-    ok('token works; saved in the Keychain and cleared from the clipboard. Run `factory secret` in each repo to use it.');
-    if (!existsSync(join(root, '.git'))) return;
+    ok('token works; saved in the Keychain and cleared from the clipboard.');
+    if (!all && !existsSync(join(root, '.git'))) return;
   }
-  const repo = gh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], root);
-  if (!repo.ok) die('this folder has no GitHub repo `gh` can see.');
-  const token = spawnSync('security', ['find-generic-password', '-a', process.env.USER, '-s', KEYCHAIN_SERVICE, '-w'], { encoding: 'utf8' });
-  if (token.status !== 0 || !token.stdout.trim()) die('no token in the Keychain yet. Run `claude setup-token`, then `factory secret --save`.');
-  const set = spawnSync('gh', ['secret', 'set', 'CLAUDE_CODE_OAUTH_TOKEN', '--repo', repo.out], { input: token.stdout.trim(), encoding: 'utf8' });
-  if (set.status !== 0) die(`gh could not set the secret: ${set.stderr.trim()}`);
-  ok(`CLAUDE_CODE_OAUTH_TOKEN set on ${repo.out}`);
+  const stored = spawnSync('security', ['find-generic-password', '-a', process.env.USER, '-s', KEYCHAIN_SERVICE, '-w'], { encoding: 'utf8' });
+  const token = stored.stdout?.trim();
+  if (stored.status !== 0 || !token) die('no token in the Keychain yet. Run `claude setup-token`, copy the token, then `factory secret --save --all`.');
+  // Catch an expired or revoked token here, not as a failed cloud run.
+  if (!save) {
+    const error = testToken(token);
+    if (error) die(`the token in your Keychain no longer works: ${error}\nRun \`claude setup-token\`, copy the token, then \`factory secret --save --all\`.`);
+  }
+  let repos;
+  if (all) {
+    repos = factoryRepos();
+    if (!repos.length) die('none of your repos has the factory worker on its default branch yet.');
+  } else {
+    const repo = gh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], root);
+    if (!repo.ok) die('this folder has no GitHub repo `gh` can see. Use --all to update every factory repo.');
+    repos = [repo.out];
+  }
+  for (const repo of repos) {
+    const set = spawnSync('gh', ['secret', 'set', 'CLAUDE_CODE_OAUTH_TOKEN', '--repo', repo], { input: token, encoding: 'utf8' });
+    if (set.status !== 0) die(`gh could not set the secret on ${repo}: ${set.stderr.trim()}`);
+    ok(`CLAUDE_CODE_OAUTH_TOKEN set on ${repo}`);
+  }
 }
 
 const [command = 'help', ...rest] = process.argv.slice(2);
@@ -398,7 +428,12 @@ switch (command) {
     doctor(repoRoot(target));
     break;
   case 'secret':
-    secret(flags.includes('--save') && !rest.some((a) => !a.startsWith('--')) ? process.cwd() : repoRoot(target), { save: flags.includes('--save') });
+    {
+      const save = flags.includes('--save');
+      const all = flags.includes('--all');
+      const explicit = rest.some((a) => !a.startsWith('--'));
+      secret((save || all) && !explicit ? process.cwd() : repoRoot(target), { save, all });
+    }
     break;
   case 'help':
   case '--help':

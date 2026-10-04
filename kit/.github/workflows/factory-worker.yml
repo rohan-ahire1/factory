@@ -52,7 +52,7 @@ jobs:
           set -euo pipefail
           if [ "$HAS_TOKEN" != "true" ]; then
             # shellcheck disable=SC2016 # the backticks are Markdown, not a command
-            echo 'The `CLAUDE_CODE_OAUTH_TOKEN` secret is not set. Run `factory secret` in this repo on your Mac.' > "$RUNNER_TEMP/factory-reason.txt"
+            echo 'The `CLAUDE_CODE_OAUTH_TOKEN` secret is not set. On your Mac: `claude setup-token`, copy the token, then `factory secret --save --all`.' > "$RUNNER_TEMP/factory-reason.txt"
             exit 1
           fi
           if [ "$GITHUB_EVENT_NAME" = "issues" ]; then
@@ -163,6 +163,9 @@ jobs:
             reason=$(cat "$RUNNER_TEMP/factory-reason.txt")
           else
             reason="A setup step failed before Claude started. Open the run log to see which one."
+          fi
+          if grep -qiE '401|failed to authenticate|token is invalid|invalid api key' <<<"$reason"; then
+            reason="$reason"$'\n\n'"The Claude token has expired or was replaced. On your Mac: \`claude setup-token\`, copy the token, then \`factory secret --save --all\`. That updates every factory repo at once."
           fi
           echo "::error::$reason"
           gh label create factory:failed --color D93F0B --description "Factory run failed; see the comment" --force >/dev/null 2>&1 || true
