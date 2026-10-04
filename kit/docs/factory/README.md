@@ -7,7 +7,7 @@ Work goes in as GitHub issues. Verified PRs come out. You choose what goes in an
 ```
  you (phone or chat)          cloud (GitHub Actions)                         you
  ───────────────────          ───────────────────────────────────────        ──────────────
- issue + `factory` label ──▶  worker: Claude Code + factory-worker skill
+ issue + size label    ──▶  worker: Claude Code + factory-worker skill
                               branch → change → gates from factory.json
                               → browser check (apps) → opens PR        ──▶  CI reruns every gate,
                                                                             posts results + screenshots
@@ -29,7 +29,7 @@ Work goes in as GitHub issues. Verified PRs come out. You choose what goes in an
 | Skills: worker, verify, file work from chat, inspect a PR | `.claude/skills/factory-*` |
 | Cloud worker | `.github/workflows/factory-worker.yml` |
 | Gates + results comment on every PR | `.github/workflows/factory-gates.yml` |
-| Phone intake form | `.github/ISSUE_TEMPLATE/factory.yml` |
+| Phone intake forms, one per job size | `.github/ISSUE_TEMPLATE/factory*.yml` |
 
 Files marked "Managed by the factory kit" are replaced by `factory update`. Change behaviour through `factory.json` instead.
 
@@ -50,9 +50,30 @@ Files marked "Managed by the factory kit" are replaced by `factory update`. Chan
     "ignore": []                       // regexes for known, accepted browser-check problems
   },
   "protect": ["ops/", ".github/workflows/"],  // agents leave these alone unless asked
-  "worker": { "model": "claude-opus-5-5", "maxTurns": 150, "tools": [] }  // extra allowed tools, e.g. "Bash(make:*)"
+  "worker": {
+    "tools": [],                       // extra allowed tools, e.g. "Bash(make:*)"
+    "sizes": {                         // optional: override any job size (defaults below)
+      "standard": { "maxTurns": 200 }
+    }
+  }
 }
 ```
+
+## Job sizes
+
+The label picks the model, effort and turn limit. Pick the smallest one that fits: it costs less, and the worker stops and says so if the job is bigger than the label.
+
+| Label | Issue form | Model | Effort | Max turns | For |
+|---|---|---|---|---|---|
+| `factory:cheap` | Factory job: small | Sonnet 5.5 | high | 60 | Copy, a style tweak, a one-file fix |
+| `factory` | Factory job | Opus 5.5 | medium | 150 | Most features and bugs |
+| `factory:deep` | Factory job: big | Opus 5.5 | high | 250 | Big features, hard bugs |
+
+Opus jobs fall back to Sonnet when Opus is overloaded. For `@claude` comments, the size comes from the issue's or PR's labels (default `factory`).
+
+## When a run fails
+
+The worker always reports back. While it runs, the issue has a `factory:working` label. If it fails, it adds `factory:failed` and comments the reason with a link to the log: a missing token, the turn limit, an API error. If Claude fails before doing any work with a temporary error (overloaded, a timeout), it waits a minute and retries once by itself. To try again, remove the size label and add it back.
 
 ## Safety
 
@@ -64,7 +85,7 @@ To stop the worker, set the repo variable `FACTORY_PAUSED` to `true` (Settings �
 
 ## Daily use
 
-- **From your phone:** GitHub app → New issue → "Factory job". The worker starts right away.
+- **From your phone:** GitHub app → New issue → "Factory job" (or "small" / "big"). The worker starts right away.
 - **From chat:** tell Claude "file this: …" (the `factory-file` skill writes a proper issue).
 - **Fix a PR:** comment `@claude <what to change>` on it.
 - **Before merging:** read the results comment on the PR. For anything non-trivial, ask Claude to inspect it (the `factory-inspect` skill).

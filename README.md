@@ -20,7 +20,7 @@ Then, once per account:
    claude setup-token
    ```
    ```bash
-   factory secret --save
+   factory secret --save --all
    ```
 
 ## Add the factory to a repo
@@ -42,7 +42,7 @@ By hand: `factory init`, edit `factory.json`, `node .factory/gates.mjs`, `factor
 | `factory init` | Detects the stack, writes `factory.json`, copies the kit into the repo |
 | `factory update` | Refreshes the kit files to this version; keeps `factory.json` and your docs |
 | `factory doctor` | Checks the setup: config, kit files, guard, label, secret, deploy workflows |
-| `factory secret` | Copies your token from the Keychain into the repo's Actions secret (`--save` stores it first) |
+| `factory secret` | Tests your token and copies it from the Keychain into the repo's Actions secret (`--save` stores it first, `--all` does every factory repo) |
 
 ## What it detects
 

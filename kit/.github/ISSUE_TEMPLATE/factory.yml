@@ -1,7 +1,7 @@
-name: Factory job
-description: Ask the agent factory to build or fix something. A cloud agent starts as soon as this is filed.
+name: "Factory job"
+description: "Most jobs: a feature, a bug, a page change. Runs on Opus (medium effort). Starts as soon as this is filed."
 title: "<what to change, in a few words>"
-labels: [factory]
+labels: ["factory"]
 body:
   - type: textarea
     id: what

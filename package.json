@@ -1,6 +1,6 @@
 {
   "name": "factory-kit",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "description": "Drop-in agent factory for any GitHub repo: issues in, verified PRs out, a human merges.",
   "type": "module",
   "bin": { "factory": "bin/factory.mjs" },

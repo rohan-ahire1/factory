@@ -3,6 +3,7 @@ name: Factory worker
 
 # Label an issue `factory` (or comment `@claude` on an issue or PR) and a Claude Code agent builds it
 # on a branch, proves it, and opens a PR. It never merges. You do.
+# Job size comes from the label: `factory:cheap`, `factory` (standard) or `factory:deep`. Sizes live in factory.json.
 # Pause everything: Settings → Secrets and variables → Actions → Variables → FACTORY_PAUSED = true
 
 on:
@@ -21,7 +22,7 @@ jobs:
   work:
     if: >-
       vars.FACTORY_PAUSED != 'true' && (
-        (github.event_name == 'issues' && github.event.label.name == 'factory' && github.actor == github.repository_owner) ||
+        (github.event_name == 'issues' && contains(fromJSON('["factory", "factory:cheap", "factory:deep"]'), github.event.label.name) && github.actor == github.repository_owner) ||
         (github.event_name != 'issues' && contains(github.event.comment.body, '@claude') && github.event.comment.user.login == github.repository_owner)
       )
     runs-on: ubuntu-latest
@@ -32,11 +33,41 @@ jobs:
       issues: write
       id-token: write
       actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
     steps:
       - name: Check out source
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      # Fail in seconds, with a reason on the issue, before spending minutes on installs.
+      - name: Start
+        id: start
+        env:
+          HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+          LABEL: ${{ github.event.label.name }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_TOKEN" != "true" ]; then
+            # shellcheck disable=SC2016 # the backticks are Markdown, not a command
+            echo 'The `CLAUDE_CODE_OAUTH_TOKEN` secret is not set. On your Mac: `claude setup-token`, copy the token, then `factory secret --save --all`.' > "$RUNNER_TEMP/factory-reason.txt"
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "issues" ]; then
+            labels=("$LABEL")
+          else
+            mapfile -t labels < <(jq -r '(.issue.labels // .pull_request.labels // [])[].name' "$GITHUB_EVENT_PATH")
+          fi
+          size=$(node .factory/config.mjs size "${labels[@]}")
+          echo "size=$size" >> "$GITHUB_OUTPUT"
+          echo "Job size: $size"
+          # Status labels are a convenience: never fail the run over them.
+          gh label create factory:working --color FBCA04 --description "Factory agent is working on this" --force >/dev/null 2>&1 || true
+          gh label create factory:failed --color D93F0B --description "Factory run failed; see the comment" --force >/dev/null 2>&1 || true
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$NUMBER/labels/factory:failed" >/dev/null 2>&1 || true
+          gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/labels" -f 'labels[]=factory:working' >/dev/null 2>&1 || true
 
       - name: Read factory.json
         id: cfg
@@ -62,17 +93,84 @@ jobs:
         run: |
           {
             echo "claude_args<<FACTORY_EOF"
-            node .factory/config.mjs worker-args
+            node .factory/config.mjs worker-args "${{ steps.start.outputs.size }}"
             echo
             echo "FACTORY_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # Pinned to a release so an upstream change can't break every repo at once. `factory update` moves it.
       - name: Run Claude Code
-        uses: anthropics/claude-code-action@v1
+        id: claude
+        continue-on-error: true
+        uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Issue label → autonomous run with the factory playbook. Comments → interactive (@claude) mode.
           # Block scalar: in a plain value, the " #" in "issue #{0}" would start a YAML comment.
           prompt: >-
-            ${{ github.event_name == 'issues' && format('Work GitHub issue #{0} in {1} end to end using the factory-worker skill in .claude/skills/factory-worker/SKILL.md. Read AGENTS.md and factory.json first. Create your own branch named factory/issue-{0}-<short-slug>; never commit or push to the protected branch and never merge. Prove the change with `node .factory/gates.mjs` (and the factory-verify skill for UI changes), then open a PR with gh pr create following .github/pull_request_template.md, and comment the PR link on the issue. If you hit a blocker, comment on the issue explaining it and stop.', github.event.issue.number, github.repository) || '' }}
+            ${{ github.event_name == 'issues' && format('Work GitHub issue #{0} in {1} end to end using the factory-worker skill in .claude/skills/factory-worker/SKILL.md. Job size: {2} (see "Job size" in the skill). Read AGENTS.md and factory.json first. Create your own branch named factory/issue-{0}-<short-slug>; never commit or push to the protected branch and never merge. Prove the change with `node .factory/gates.mjs` (and the factory-verify skill for UI changes), then open a PR with gh pr create following .github/pull_request_template.md, and comment the PR link on the issue. If you hit a blocker, comment on the issue explaining it and stop.', github.event.issue.number, github.repository, steps.start.outputs.size) || '' }}
           claude_args: ${{ steps.args.outputs.claude_args }}
+
+      # Retry once, only when Claude failed before doing any work and the error looks temporary.
+      - name: Decide whether to retry
+        id: check
+        if: steps.claude.outcome == 'failure'
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          f="${EXECUTION_FILE:-$RUNNER_TEMP/claude-execution-output.json}"
+          [ -f "$f" ] || exit 0
+          turns=$(jq -r '[.[] | select(.type == "result")] | last | .num_turns // 0' "$f")
+          reason=$(jq -r '[.[] | select(.type == "result")] | last | (.result // .subtype // "") | tostring' "$f")
+          echo "Turns: $turns. Reason: $reason"
+          if [ "$turns" -le 1 ] && grep -qiE 'overloaded|529|50[0-4]|internal server error|timed? ?out|ECONNRESET|socket hang up|network' <<<"$reason"; then
+            echo "retry=true" >> "$GITHUB_OUTPUT"
+            sleep 60
+          fi
+
+      - name: Run Claude Code (retry)
+        id: retry
+        if: steps.check.outputs.retry == 'true'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: >-
+            ${{ github.event_name == 'issues' && format('Work GitHub issue #{0} in {1} end to end using the factory-worker skill in .claude/skills/factory-worker/SKILL.md. Job size: {2} (see "Job size" in the skill). Read AGENTS.md and factory.json first. Create your own branch named factory/issue-{0}-<short-slug>; never commit or push to the protected branch and never merge. Prove the change with `node .factory/gates.mjs` (and the factory-verify skill for UI changes), then open a PR with gh pr create following .github/pull_request_template.md, and comment the PR link on the issue. If you hit a blocker, comment on the issue explaining it and stop.', github.event.issue.number, github.repository, steps.start.outputs.size) || '' }}
+          claude_args: ${{ steps.args.outputs.claude_args }}
+
+      # Always say how it went on the issue or PR, so a failure is never silent.
+      - name: Report
+        if: always()
+        env:
+          CLAUDE_OUTCOME: ${{ steps.retry.outcome != 'skipped' && steps.retry.outcome || steps.claude.outcome }}
+          EXECUTION_FILE: ${{ steps.retry.outputs.execution_file || steps.claude.outputs.execution_file }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SIZE: ${{ steps.start.outputs.size }}
+        run: |
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$NUMBER/labels/factory:working" >/dev/null 2>&1 || true
+          if [ "$CLAUDE_OUTCOME" = "success" ]; then exit 0; fi
+          f="${EXECUTION_FILE:-$RUNNER_TEMP/claude-execution-output.json}"
+          if [ "$CLAUDE_OUTCOME" = "failure" ] && [ -f "$f" ]; then
+            result=$(jq -c '[.[] | select(.type == "result")] | last // {}' "$f")
+            subtype=$(jq -r '.subtype // ""' <<<"$result")
+            if [ "$subtype" = "error_max_turns" ]; then
+              reason="Hit the turn limit for a ${SIZE:-standard} job ($(jq -r '.num_turns // "?"' <<<"$result") turns). Split the issue, or relabel it \`factory:deep\`."
+            else
+              reason=$(jq -r '(.result // .errors // .subtype // "Claude stopped without giving a reason.") | tostring' <<<"$result" | head -c 1500)
+            fi
+          elif [ -f "$RUNNER_TEMP/factory-reason.txt" ]; then
+            reason=$(cat "$RUNNER_TEMP/factory-reason.txt")
+          else
+            reason="A setup step failed before Claude started. Open the run log to see which one."
+          fi
+          if grep -qiE '401|failed to authenticate|token is invalid|invalid api key' <<<"$reason"; then
+            reason="$reason"$'\n\n'"The Claude token has expired or was replaced. On your Mac: \`claude setup-token\`, copy the token, then \`factory secret --save --all\`. That updates every factory repo at once."
+          fi
+          echo "::error::$reason"
+          gh label create factory:failed --color D93F0B --description "Factory run failed; see the comment" --force >/dev/null 2>&1 || true
+          gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/labels" -f 'labels[]=factory:failed' >/dev/null 2>&1 || true
+          quoted="> ${reason//$'\n'/$'\n'> }"
+          body=$(printf '**Factory run failed.**\n\n%s\n\n[Run log](%s). To try again, remove the size label and add it back.' "$quoted" "$RUN_URL")
+          gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" -f body="$body" >/dev/null || true
+          exit 1
