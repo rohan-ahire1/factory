@@ -221,7 +221,7 @@ function loadRepoConfig(root) {
 }
 
 function withDefaults(cfg) {
-  return { branch: 'main', node: '22', setup: [], gates: [], app: null, protect: [], ...cfg, worker: { model: 'claude-opus-5-5', maxTurns: 150, tools: [], ...cfg.worker } };
+  return { branch: 'main', node: '22', setup: [], gates: [], app: null, protect: [], ...cfg, worker: { tools: [], ...cfg.worker } };
 }
 
 function defaultBranch(root) {
@@ -242,13 +242,28 @@ function install(root, { init }) {
     if (!init) die('factory.json is missing. Run `factory init` first.');
     const detected = detect(root);
     notes = detected.notes;
-    cfg = { kit: VERSION, ...detected.cfg, branch: defaultBranch(root) ?? detected.cfg.branch, worker: { model: 'claude-opus-5-5', maxTurns: 150, tools: [] } };
+    cfg = { kit: VERSION, ...detected.cfg, branch: defaultBranch(root) ?? detected.cfg.branch, worker: { tools: [] } };
     write(join(root, 'factory.json'), JSON.stringify(cfg, null, 2) + '\n');
     changes.push('factory.json (detected; review it)');
-  } else if (cfg.kit !== VERSION) {
-    cfg.kit = VERSION;
-    write(join(root, 'factory.json'), JSON.stringify(cfg, null, 2) + '\n');
-    changes.push(`factory.json (kit version ${VERSION})`);
+  } else {
+    let dirty = false;
+    if (cfg.kit !== VERSION) {
+      cfg.kit = VERSION;
+      dirty = true;
+      changes.push(`factory.json (kit version ${VERSION})`);
+    }
+    // Kit 1.1 replaced worker.model/maxTurns with job sizes. Keep a custom model as the standard size.
+    const { model, maxTurns, ...worker } = cfg.worker ?? {};
+    if (model !== undefined || maxTurns !== undefined) {
+      const standard = {};
+      if (model && model !== 'claude-opus-5-5') standard.model = model;
+      if (maxTurns && maxTurns !== 150) standard.maxTurns = maxTurns;
+      if (Object.keys(standard).length) worker.sizes = { ...worker.sizes, standard: { ...worker.sizes?.standard, ...standard } };
+      cfg.worker = worker;
+      dirty = true;
+      changes.push('factory.json (worker.model/maxTurns moved to job sizes)');
+    }
+    if (dirty) write(join(root, 'factory.json'), JSON.stringify(cfg, null, 2) + '\n');
   }
   cfg = withDefaults(cfg);
 
@@ -322,9 +337,15 @@ function doctor(root) {
   if (!repo.ok) {
     warn('GitHub checks skipped: `gh` is not signed in or the repo has no GitHub remote.');
   } else {
-    const labels = gh(['label', 'list', '--search', 'factory', '--json', 'name', '-q', '.[].name'], root);
-    if (labels.out.split('\n').includes('factory')) ok('label "factory" exists');
-    else bad(`label "factory" is missing: gh label create factory --color B60205 --repo ${repo.out}`);
+    const labels = gh(['label', 'list', '--search', 'factory', '--json', 'name', '-q', '.[].name'], root).out.split('\n');
+    const sizeLabels = [
+      ['factory', 'B60205', 'Factory job (Opus, medium effort)'],
+      ['factory:cheap', '0E8A16', 'Small factory job (Sonnet, high effort)'],
+      ['factory:deep', '5319E7', 'Big factory job (Opus, high effort)'],
+    ];
+    const missing = sizeLabels.filter(([name]) => !labels.includes(name));
+    if (!missing.length) ok('size labels exist: factory, factory:cheap, factory:deep');
+    else bad(`labels missing: ${missing.map(([n]) => n).join(', ')}. Create them:\n${missing.map(([n, c, d]) => `      gh label create ${n} --color ${c} --description "${d}" --repo ${repo.out}`).join('\n')}`);
     const secrets = gh(['secret', 'list', '--repo', repo.out, '--json', 'name', '-q', '.[].name'], root);
     if (secrets.out.split('\n').includes('CLAUDE_CODE_OAUTH_TOKEN')) ok('secret CLAUDE_CODE_OAUTH_TOKEN is set');
     else bad(`secret CLAUDE_CODE_OAUTH_TOKEN is missing: run \`factory secret\` in ${root}`);

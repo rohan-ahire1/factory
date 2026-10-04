@@ -6,11 +6,14 @@ description: Turn a request described in chat into a well-formed factory issue o
 # File work for the factory
 
 1. Restate the request in one plain sentence and confirm any detail that changes the result (which page, exact copy, which behaviour). Keep it to one short question at most.
-2. Size it. If it's more than one concern, split it into separate issues, one change each.
-3. Create each issue:
+2. Size it. If it's more than one concern, split it into separate issues, one change each. Then pick the label:
+   - `factory:cheap` (Sonnet, high effort): small and clear, like copy, a style tweak or a one-file fix.
+   - `factory` (Opus, medium effort): most features and bugs. The default when unsure.
+   - `factory:deep` (Opus, high effort): big or tricky, like a feature across many files or a hard bug.
+3. Create each issue with that label:
 
 ```bash
-gh issue create --label factory --title "<imperative, under 60 chars>" --body-file - <<'BODY'
+gh issue create --label <factory:cheap | factory | factory:deep> --title "<imperative, under 60 chars>" --body-file - <<'BODY'
 ## What
 <plain description of the change or bug>
 
@@ -26,10 +29,10 @@ gh issue create --label factory --title "<imperative, under 60 chars>" --body-fi
 BODY
 ```
 
-4. The `factory` label starts the cloud worker right away. To queue without starting, create the issue without the label and say so.
-5. Reply with the issue links and one line on what will happen next.
+4. The label starts the cloud worker right away. To queue without starting, create the issue without a label and say so.
+5. Reply with the issue links, the size you picked and why, and one line on what will happen next.
 
 Rules:
 - "Done when" must be checkable from a screenshot, a test or a command. "Looks better" isn't checkable, so ask what "better" means.
 - Never put secrets, personal data or unverified claims in an issue.
-- If the `factory` label doesn't exist yet: `gh label create factory --color B60205 --description "Agent factory: build this"`.
+- If a size label doesn't exist yet, `factory doctor` prints the commands to create it.

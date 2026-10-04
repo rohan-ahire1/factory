@@ -7,6 +7,16 @@ description: Take one factory issue from request to a verified pull request. Use
 
 You own one issue, start to finish, and stop at an open PR. You never merge.
 
+## Job size
+
+The prompt names the job size (from the issue label). It sets how much you explore, not the quality bar: every size still has to pass the gates and show proof.
+
+- **cheap** (`factory:cheap`, Sonnet): a small, clear change. Go straight to the files the issue or the feature map names; don't explore beyond them. Skip the "before" screenshot unless it's a bug. If it turns out to need a design decision or more than a few files, stop and comment on the issue suggesting `factory` or `factory:deep`, instead of pushing on.
+- **standard** (`factory`, Opus medium): follow the steps below as written.
+- **deep** (`factory:deep`, Opus high): before editing, comment a short plan on the issue (files, approach, how you'll prove it). Look for the root cause, cover edge cases with tests, and check routes next to the ones you touched.
+
+Spend tokens where they change the result: use the feature map and `Grep` to find code before reading it, read only the parts you need, don't re-read files you already have, and open only the screenshots for routes you changed.
+
 Work through these steps in order. If a step doesn't apply, write `skip: <reason>` in the PR. If any step fails the bar, **stop the line**: comment on the issue with what you found and what's blocking, and don't open a half-done PR.
 
 ## 1. Understand
