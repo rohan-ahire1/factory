@@ -68,6 +68,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run Claude Code
+        id: claude
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -76,3 +77,16 @@ jobs:
           prompt: >-
             ${{ github.event_name == 'issues' && format('Work GitHub issue #{0} in {1} end to end using the factory-worker skill in .claude/skills/factory-worker/SKILL.md. Read AGENTS.md and factory.json first. Create your own branch named factory/issue-{0}-<short-slug>; never commit or push to the protected branch and never merge. Prove the change with `node .factory/gates.mjs` (and the factory-verify skill for UI changes), then open a PR with gh pr create following .github/pull_request_template.md, and comment the PR link on the issue. If you hit a blocker, comment on the issue explaining it and stop.', github.event.issue.number, github.repository) || '' }}
           claude_args: ${{ steps.args.outputs.claude_args }}
+
+      # The action hides Claude's output, so a run that stops early fails with no reason. Print only the final result text.
+      - name: Show why Claude stopped
+        if: failure() && steps.claude.outcome == 'failure'
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          f="${EXECUTION_FILE:-$RUNNER_TEMP/claude-execution-output.json}"
+          if [ -f "$f" ]; then
+            jq -r '[.[] | select(.type == "result")] | last | (.result // .errors // "No result text") | tostring' "$f"
+          else
+            echo "No execution log found."
+          fi
