@@ -2,7 +2,8 @@
 name: Factory worker
 
 # Label an issue `factory` (or comment `@claude` on an issue or PR) and a Claude Code agent builds it
-# on a branch, proves it, and opens a PR. It never merges. You do.
+# on a branch, proves it, and opens a PR. It never merges: you do, or factory-automerge.yml does once the gates pass.
+# With the FACTORY_GH_TOKEN secret set, its commits, PRs and comments are under your own GitHub name.
 # Job size comes from the label: `factory:cheap`, `factory` (standard) or `factory:deep`. Sizes live in factory.json.
 # Pause everything: Settings → Secrets and variables → Actions → Variables → FACTORY_PAUSED = true
 
@@ -34,7 +35,7 @@ jobs:
       id-token: write
       actions: read
     env:
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN || github.token }}
       NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
     steps:
       - name: Check out source
@@ -105,6 +106,11 @@ jobs:
         uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Your own token and name, so the work shows up as yours. Without the secret it falls back to the Claude app.
+          github_token: ${{ secrets.FACTORY_GH_TOKEN }}
+          bot_id: ${{ github.repository_owner_id }}
+          bot_name: ${{ github.repository_owner }}
+          settings: '{"attribution":{"commit":"","pr":""}}'
           # Issue label → autonomous run with the factory playbook. Comments → interactive (@claude) mode.
           # Block scalar: in a plain value, the " #" in "issue #{0}" would start a YAML comment.
           prompt: >-
@@ -135,6 +141,11 @@ jobs:
         uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Your own token and name, so the work shows up as yours. Without the secret it falls back to the Claude app.
+          github_token: ${{ secrets.FACTORY_GH_TOKEN }}
+          bot_id: ${{ github.repository_owner_id }}
+          bot_name: ${{ github.repository_owner }}
+          settings: '{"attribution":{"commit":"","pr":""}}'
           prompt: >-
             ${{ github.event_name == 'issues' && format('Work GitHub issue #{0} in {1} end to end using the factory-worker skill in .claude/skills/factory-worker/SKILL.md. Job size: {2} (see "Job size" in the skill). Read AGENTS.md and factory.json first. Create your own branch named factory/issue-{0}-<short-slug>; never commit or push to the protected branch and never merge. Prove the change with `node .factory/gates.mjs` (and the factory-verify skill for UI changes), then open a PR with gh pr create following .github/pull_request_template.md, and comment the PR link on the issue. If you hit a blocker, comment on the issue explaining it and stop.', github.event.issue.number, github.repository, steps.start.outputs.size) || '' }}
           claude_args: ${{ steps.args.outputs.claude_args }}
