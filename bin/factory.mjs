@@ -113,7 +113,8 @@ function upsertAgents(root, cfg, changes) {
     write(file, `# ${name}: agent guide\n\n<!-- One paragraph: what this repo is and its stack. -->\n\n## Map\n\n<!-- Key folders and what lives in them. -->\n\n## Rules\n\n<!-- Project rules: product, brand, style, anything an agent must never do here. -->\n\n${block}\n`);
     changes.push('AGENTS.md (new; fill in the Map and Rules sections)');
   } else if (current.includes(BLOCK_START) && current.includes(BLOCK_END)) {
-    const next = current.replace(new RegExp(`${BLOCK_START}[\\s\\S]*?${BLOCK_END}`), block);
+    // A function replacement, so a `$` in a gate command isn't read as a pattern like `$&`.
+    const next = current.replace(new RegExp(`${BLOCK_START}[\\s\\S]*?${BLOCK_END}`), () => block);
     if (next !== current) {
       write(file, next);
       changes.push('AGENTS.md (factory section refreshed)');
