@@ -30,15 +30,29 @@ if (/\bgh\s+pr\s+merge\b/.test(cmd)) block('agents may not merge PRs.');
 const escaped = branch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const targetsBranch = new RegExp(`(^|[\\s:+])(refs/heads/)?${escaped}(\\s|$)`);
 
-for (const push of cmd.split(/&&|\|\||;|\n/).filter((part) => /\bgit\s+push\b/.test(part))) {
-  const rest = push.replace(/^[\s\S]*?\bgit\s+push\b/, '');
-  if (targetsBranch.test(rest)) block(`this push targets ${branch}.`);
-  const explicitRef = rest.split(/\s+/).filter((a) => a && !a.startsWith('-')).length >= 2;
-  if (!explicitRef) {
-    let current = '';
+// `git push`, also with global options first (git -C dir push, git -c k=v push).
+const gitPush = /\bgit((?:\s+(?:-[Cc]\s+\S+|--?[\w-]+(?:=\S+)?))*)\s+push\b/;
+
+let current = null;
+const currentBranch = () => {
+  if (current === null) {
     try {
       current = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    } catch {}
-    if (current === branch) block(`you are on ${branch}, so a bare \`git push\` would push it.`);
+    } catch {
+      current = '';
+    }
+  }
+  return current;
+};
+
+for (const push of cmd.split(/&&|\|\||;|\n/).filter((part) => gitPush.test(part))) {
+  const rest = push.slice(push.search(gitPush)).replace(gitPush, '');
+  if (targetsBranch.test(rest)) block(`this push targets ${branch}.`);
+  if (/(^|\s)--(all|mirror)\b/.test(rest)) block(`--all and --mirror would push ${branch} too.`);
+  const args = rest.split(/\s+/).filter((a) => a && !a.startsWith('-'));
+  // HEAD (or @) as the source with no explicit destination pushes the current branch.
+  const pushesHead = args.slice(1).some((a) => /^\+?(HEAD|@)$/.test(a));
+  if ((args.length < 2 || pushesHead) && currentBranch() === branch) {
+    block(`you are on ${branch}, so this push would push it.`);
   }
 }
